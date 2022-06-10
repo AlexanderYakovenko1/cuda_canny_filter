@@ -91,8 +91,8 @@ void ApplyConv2D__basic(const float* src, float* dst, int width, int height, con
     int kernel_radius_width = kernel_width / 2;
     int kernel_radius_height = kernel_height / 2;
 
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    int j = blockIdx.y * blockDim.y + threadIdx.y;
+    int i = blockIdx.y * blockDim.y + threadIdx.y;
+    int j = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (i < height && j < width) {
         float conv_val = 0.;
@@ -133,7 +133,7 @@ void ApplyConv2D__shared(const float* src, float* dst, int width, int height, co
     float* shared_kernel = data;
     float* shared_src = &data[CalculateAlignedOffset(kernel_height * kernel_width)];
 
-    int threadId = blockDim.x * threadIdx.x + threadIdx.y;
+    int threadId = blockDim.y * threadIdx.y + threadIdx.x;
     int blockSize = blockDim.x * blockDim.y;
 
     // load kernel to shared memory
@@ -142,20 +142,20 @@ void ApplyConv2D__shared(const float* src, float* dst, int width, int height, co
     }
 
     // load src image pixels into shared memory with apron
-    int top_left_x = blockIdx.x * blockDim.x - kernel_radius_height;
-    int top_left_y = blockIdx.y * blockDim.y - kernel_radius_width;
-    int bottom_right_x = (blockIdx.x + 1) * blockDim.x + kernel_radius_height;
-    int bottom_right_y = (blockIdx.y + 1) * blockDim.y + kernel_radius_width;
+    int top_left_x = blockIdx.x * blockDim.x - kernel_radius_width;
+    int top_left_y = blockIdx.y * blockDim.y - kernel_radius_height;
+    int bottom_right_x = (blockIdx.x + 1) * blockDim.x + kernel_radius_width;
+    int bottom_right_y = (blockIdx.y + 1) * blockDim.y + kernel_radius_height;
 
 
-    for (int i = top_left_x + threadIdx.x; i < height && i < bottom_right_x; i += blockDim.x) {
-        for (int j = top_left_y + threadIdx.y; j < width && j < bottom_right_y; j += blockDim.y) {
+    for (int i = top_left_y + threadIdx.y; i < height && i < bottom_right_y; i += blockDim.y) {
+        for (int j = top_left_x + threadIdx.x; j < width && j < bottom_right_x; j += blockDim.z) {
             if (i < 0 || j < 0) {
                 continue;
             }
 
             int src_idx = i * width + j;
-            int shared_src_idx = (i - top_left_x) * (blockDim.y + 2 * kernel_radius_width) + (j - top_left_y);
+            int shared_src_idx = (i - top_left_y) * (blockDim.x + 2 * kernel_radius_width) + (j - top_left_x);
 
 
             shared_src[shared_src_idx] = src[src_idx];
@@ -164,11 +164,11 @@ void ApplyConv2D__shared(const float* src, float* dst, int width, int height, co
 
     __syncthreads();
 
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    int j = blockIdx.y * blockDim.y + threadIdx.y;
+    int i = blockIdx.y * blockDim.y + threadIdx.y;
+    int j = blockIdx.x * blockDim.x + threadIdx.x;
 
-    int shared_i = threadIdx.x + kernel_radius_height;
-    int shared_j = threadIdx.y + kernel_radius_width;
+    int shared_i = threadIdx.y + kernel_radius_height;
+    int shared_j = threadIdx.x + kernel_radius_width;
 
     if (i < height && j < width) {
         float conv_val = 0.;
@@ -178,7 +178,7 @@ void ApplyConv2D__shared(const float* src, float* dst, int width, int height, co
 
                 // still needed since we are always inside shared memory but might be outside the source data
                 if (i + k_i >= 0 && i + k_i < height && j + k_j >= 0 && j + k_j < width) {
-                    idx = (shared_i + k_i) * (blockDim.y + 2 * kernel_radius_width) + shared_j + k_j;
+                    idx = (shared_i + k_i) * (blockDim.x + 2 * kernel_radius_width) + shared_j + k_j;
                     k_idx = (k_i + kernel_radius_height) * kernel_width + k_j + kernel_radius_width;
 
                     conv_val += shared_src[idx] * shared_kernel[k_idx];
@@ -196,8 +196,8 @@ __global__
 void ApplySeparableConv2DCols__basic(const float* src, float* dst, int width, int height, const float* kernel, int kernel_size) {
     int kernel_radius = kernel_size / 2;
 
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    int j = blockIdx.y * blockDim.y + threadIdx.y;
+    int i = blockIdx.y * blockDim.y + threadIdx.y;
+    int j = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (i < height && j < width) {
         float conv_val = 0.;
@@ -220,8 +220,8 @@ __global__
 void ApplySeparableConv2DRows__basic(const float* src, float* dst, int width, int height, const float* kernel, int kernel_size) {
     int kernel_radius = kernel_size / 2;
 
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    int j = blockIdx.y * blockDim.y + threadIdx.y;
+    int i = blockIdx.y * blockDim.y + threadIdx.y;
+    int j = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (i < height && j < width) {
         float conv_val = 0.;
@@ -248,7 +248,7 @@ void ApplySeparableConv2DCols__shared(const float* src, float* dst, int width, i
     float* shared_kernel = data;
     float* shared_src = &data[CalculateAlignedOffset(kernel_size)];
 
-    int threadId = blockDim.x * threadIdx.x + threadIdx.y;
+    int threadId = blockDim.y * threadIdx.y + threadIdx.x;
     int blockSize = blockDim.x * blockDim.y;
 
     // load kernel to shared memory
@@ -257,20 +257,21 @@ void ApplySeparableConv2DCols__shared(const float* src, float* dst, int width, i
     }
 
     // load src image pixels into shared memory with apron
-    int top_left_x = blockIdx.x * blockDim.x - kernel_radius;
-    int top_left_y = blockIdx.y * blockDim.y;
-    int bottom_right_x = (blockIdx.x + 1) * blockDim.x + kernel_radius;
-    int bottom_right_y = (blockIdx.y + 1) * blockDim.y;
+    int top_left_x = blockIdx.x * blockDim.x;
+    int top_left_y = blockIdx.y * blockDim.y - kernel_radius;
+    int bottom_right_x = (blockIdx.x + 1) * blockDim.x;
+    int bottom_right_y = (blockIdx.y + 1) * blockDim.y + kernel_radius;
 
 
-    for (int i = top_left_x + threadIdx.x; i < height && i < bottom_right_x; i += blockDim.x) {
-        for (int j = top_left_y + threadIdx.y; j < width && j < bottom_right_y; j += blockDim.y) {
+
+    for (int i = top_left_y + threadIdx.y; i < height && i < bottom_right_y; i += blockDim.y) {
+        for (int j = top_left_x + threadIdx.x; j < width && j < bottom_right_x; j += blockDim.x) {
             if (i < 0 || j < 0) {
                 continue;
             }
 
             int src_idx = i * width + j;
-            int shared_src_idx = (i - top_left_x) * blockDim.y + (j - top_left_y);
+            int shared_src_idx = (i - top_left_y) * blockDim.x + (j - top_left_x);
 
             shared_src[shared_src_idx] = src[src_idx];
         }
@@ -278,18 +279,18 @@ void ApplySeparableConv2DCols__shared(const float* src, float* dst, int width, i
 
     __syncthreads();
 
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    int j = blockIdx.y * blockDim.y + threadIdx.y;
+    int i = blockIdx.y * blockDim.y + threadIdx.y;
+    int j = blockIdx.x * blockDim.x + threadIdx.x;
 
-    int shared_i = threadIdx.x + kernel_radius;
-    int shared_j = threadIdx.y;
+    int shared_i = threadIdx.y + kernel_radius;
+    int shared_j = threadIdx.x;
 
     if (i < height && j < width) {
         float conv_val = 0.;
         size_t idx, k_idx;
         for (int k_i = -kernel_radius; k_i <= kernel_radius; ++k_i) {
             if (i + k_i >= 0 && i + k_i < height) {
-                idx = (shared_i + k_i) * blockDim.y + shared_j;
+                idx = (shared_i + k_i) * blockDim.x + shared_j;
                 k_idx = k_i + kernel_radius;
 
                 conv_val += shared_src[idx] * shared_kernel[k_idx];
@@ -309,7 +310,7 @@ void ApplySeparableConv2DRows__shared(const float* src, float* dst, int width, i
     float* shared_kernel = data;
     float* shared_src = &data[CalculateAlignedOffset(kernel_size)];
 
-    int threadId = blockDim.x * threadIdx.x + threadIdx.y;
+    int threadId = blockDim.y * threadIdx.y + threadIdx.x;
     int blockSize = blockDim.x * blockDim.y;
 
     // load kernel to shared memory
@@ -318,20 +319,20 @@ void ApplySeparableConv2DRows__shared(const float* src, float* dst, int width, i
     }
 
     // load src image pixels into shared memory with apron
-    int top_left_x = blockIdx.x * blockDim.x;
-    int top_left_y = blockIdx.y * blockDim.y - kernel_radius;
-    int bottom_right_x = (blockIdx.x + 1) * blockDim.x;
-    int bottom_right_y = (blockIdx.y + 1) * blockDim.y + kernel_radius;
+    int top_left_x = blockIdx.x * blockDim.x - kernel_radius;
+    int top_left_y = blockIdx.y * blockDim.y;
+    int bottom_right_x = (blockIdx.x + 1) * blockDim.x + kernel_radius;
+    int bottom_right_y = (blockIdx.y + 1) * blockDim.y;
 
 
-    for (int i = top_left_x + threadIdx.x; i < height && i < bottom_right_x; i += blockDim.x) {
-        for (int j = top_left_y + threadIdx.y; j < width && j < bottom_right_y; j += blockDim.y) {
+    for (int i = top_left_y + threadIdx.y; i < height && i < bottom_right_y; i += blockDim.y) {
+        for (int j = top_left_x + threadIdx.x; j < width && j < bottom_right_x; j += blockDim.x) {
             if (i < 0 || j < 0) {
                 continue;
             }
 
             int src_idx = i * width + j;
-            int shared_src_idx = (i - top_left_x) * (blockDim.y + 2 * kernel_radius) + (j - top_left_y);
+            int shared_src_idx = (i - top_left_y) * (blockDim.x + 2 * kernel_radius) + (j - top_left_x);
 
             shared_src[shared_src_idx] = src[src_idx];
         }
@@ -339,18 +340,18 @@ void ApplySeparableConv2DRows__shared(const float* src, float* dst, int width, i
 
     __syncthreads();
 
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    int j = blockIdx.y * blockDim.y + threadIdx.y;
+    int i = blockIdx.y * blockDim.y + threadIdx.y;
+    int j = blockIdx.x * blockDim.x + threadIdx.x;
 
-    int shared_i = threadIdx.x;
-    int shared_j = threadIdx.y + kernel_radius;
+    int shared_i = threadIdx.y;
+    int shared_j = threadIdx.x + kernel_radius;
 
     if (i < height && j < width) {
         float conv_val = 0.;
         size_t idx, k_idx;
         for (int k_j = -kernel_radius; k_j <= kernel_radius; ++k_j) {
             if (j + k_j >= 0 && j + k_j < width) {
-                idx = shared_i * (blockDim.y + 2 * kernel_radius) + shared_j + k_j;
+                idx = shared_i * (blockDim.x + 2 * kernel_radius) + shared_j + k_j;
                 k_idx = k_j + kernel_radius;
 
                 conv_val += shared_src[idx] * shared_kernel[k_idx];
@@ -368,14 +369,14 @@ int main()
 {
     int width, height, channels;
 
-    float sigma = 10;
+    float sigma = 3;
     int radius;
     float* gaussian = GaussianKernel2D(sigma, &radius);
     float* gaussian_sep = GaussianKernel1D(sigma, &radius);
     float* dog_sep_diff = GaussianDerivativeKernel1D(sigma, &radius, true);
     float* dog_sep_norm = GaussianDerivativeKernel1D(sigma, &radius, false);
 
-    uint8_t* image = stbi_load("../gz_a.png", &width, &height, &channels, STBI_rgb);
+    uint8_t* image = stbi_load("../in.bmp", &width, &height, &channels, STBI_rgb);
     uint8_t* output = AllocateArray<uint8_t>(width, height);
     float* pad = AllocateArray<float>(width + 2 * radius, height + 2 * radius);
     uint8_t* padd = AllocateArray<uint8_t>(width + 2 * radius, height + 2 * radius);
@@ -412,7 +413,7 @@ int main()
 
 
     gpuErrchk( cudaMemcpy(cuda_pad, pad, (width + 2 * radius) * (height + 2 * radius) * sizeof(float), cudaMemcpyHostToDevice) );
-    dim3 numBlocks((height + 2 * radius) / BLOCK_SIZE + 1, (width + 2 * radius) / BLOCK_SIZE + 1);
+    dim3 numBlocks((width + 2 * radius) / BLOCK_SIZE + 1, (height + 2 * radius) / BLOCK_SIZE + 1);
     dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
     gpuErrchk( cudaMemcpy(cuda_gaussian, gaussian, (2 * radius + 1) * (2 * radius + 1) * sizeof(float), cudaMemcpyHostToDevice) );
     gpuErrchk( cudaMemcpy(cuda_gaussian_sep, gaussian_sep, (2 * radius + 1) * sizeof(float), cudaMemcpyHostToDevice) );
@@ -428,18 +429,18 @@ int main()
     printf("memsize: %d\n", memsize_sep * sizeof(float));
     cudaDeviceSynchronize();
     std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
-//    ApplyConv2D__shared<<<numBlocks, threadsPerBlock, memsize * sizeof(float)>>>(cuda_pad, cuda_pad_out,
-//                                                       width + 2 * radius, height + 2 * radius, cuda_gaussian, 2 * radius + 1, 2 * radius + 1);
+    ApplyConv2D__shared<<<numBlocks, threadsPerBlock, memsize * sizeof(float)>>>(cuda_pad, cuda_pad_out,
+                                                       width + 2 * radius, height + 2 * radius, cuda_gaussian, 2 * radius + 1, 2 * radius + 1);
 //    ApplyConv2D__basic<<<numBlocks, threadsPerBlock>>>(cuda_pad, cuda_pad_out,
 //                                                       width + 2 * radius, height + 2 * radius, cuda_gaussian, 2 * radius + 1, 2 * radius + 1);
-    ApplySeparableConv2DRows__shared<<<numBlocks, threadsPerBlock, memsize_sep * sizeof(float)>>>(cuda_pad, cuda_pad_buf,
-                                                                     width + 2 * radius, height + 2 * radius, cuda_gaussian_sep, 2 * radius + 1);
+//    ApplySeparableConv2DRows__shared<<<numBlocks, threadsPerBlock, memsize_sep * sizeof(float)>>>(cuda_pad, cuda_pad_buf,
+//                                                                     width + 2 * radius, height + 2 * radius, cuda_gaussian_sep, 2 * radius + 1);
 //    ApplySeparableConv2DRows__basic<<<numBlocks, threadsPerBlock>>>(cuda_pad, cuda_pad_buf,
 //                                                                width + 2 * radius, height + 2 * radius, cuda_gaussian_sep, 2 * radius + 1);
 //    ApplySeparableConv2DCols__basic<<<numBlocks, threadsPerBlock>>>(cuda_pad_buf, cuda_pad_out,
 //                                                                    width + 2 * radius, height + 2 * radius, cuda_gaussian_sep, 2 * radius + 1);
-    ApplySeparableConv2DCols__shared<<<numBlocks, threadsPerBlock, memsize_sep * sizeof(float)>>>(cuda_pad_buf, cuda_pad_out,
-                                                                    width + 2 * radius, height + 2 * radius, cuda_gaussian_sep, 2 * radius + 1);
+//    ApplySeparableConv2DCols__shared<<<numBlocks, threadsPerBlock, memsize_sep * sizeof(float)>>>(cuda_pad_buf, cuda_pad_out,
+//                                                                    width + 2 * radius, height + 2 * radius, cuda_gaussian_sep, 2 * radius + 1);
     cudaDeviceSynchronize();
     error = cudaGetLastError();
     if(error != cudaSuccess) {
