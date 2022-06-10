@@ -48,8 +48,8 @@ void ApplyCannyCPU(const uint8_t* input, uint8_t* output, int width, int height,
     uint8_t* padded_uint = AllocateArray<uint8_t>(padded_width, padded_height, 1);
 
 //    ++++++++++++++
-//    uint8_t* test_out = AllocateArray<uint8_t>(padded_width, padded_height, 1);
-//    float* test_cut = AllocateArray<float>(padded_width, padded_height, 1);
+    uint8_t* test_out = AllocateArray<uint8_t>(padded_width, padded_height, 1);
+    float* test_cut = AllocateArray<float>(padded_width, padded_height, 1);
 //    ++++++++++++++
 
     Pad2D<uint8_t, float>(output, padded_float_image, width, height, 1, kernel_radius);
@@ -72,10 +72,10 @@ void ApplyCannyCPU(const uint8_t* input, uint8_t* output, int width, int height,
     MagnitudeAndDirection(padded_float_h, padded_float_v, padded_float_buffer, padded_uint, padded_width, padded_height);
 //    /////
 //    FloatToUint(padded_float_buffer, test_out, padded_width, padded_height, 1);
-//    SaveImage(test_out, "../test_mag.png", padded_width, padded_height, 1);
+//    SaveImage(test_out, "../openmp_mag_debug.png", padded_width, padded_height, 1);
 //    UintToFloat(padded_uint, test_cut, padded_width, padded_height, 1);
 //    FloatToUint(test_cut, test_out, padded_width, padded_height, 1, 63);
-//    SaveImage(test_out, "../test_dir.png", padded_width, padded_height, 1);
+//    SaveImage(test_out, "../openmp_dir_debug.png", padded_width, padded_height, 1);
 //    /////
 
     NonMaxSuppression(padded_float_buffer, padded_uint, padded_float_image, padded_width, padded_height);
