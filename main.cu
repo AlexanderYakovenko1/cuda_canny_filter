@@ -69,9 +69,9 @@ std::pair<int64_t, int64_t> ApplyCannyGPU(const uint8_t* input, uint8_t* output,
     MagnitudeAndDirection<<<(padded_width * padded_height) / MAX_THREADS + 1, MAX_THREADS>>>(
             cuda_padded_float_h, cuda_padded_float_v, cuda_padded_float_buffer, cuda_padded_uint, padded_width, padded_height);
 
-    NonMaxSuppression<<<numBlocks, threadsPerBlock>>>(
+    NonMaxSuppression__nobranch<<<numBlocks, threadsPerBlock>>>(
             cuda_padded_float_buffer, cuda_padded_uint, cuda_padded_float_image, padded_width, padded_height);
-    Thresholding<<<(padded_width * padded_height) / MAX_THREADS + 1, MAX_THREADS>>>(
+    Thresholding__basic<<<(padded_width * padded_height) / MAX_THREADS + 1, MAX_THREADS>>>(
             cuda_padded_float_image, cuda_padded_uint, padded_width, padded_height, high_thresh, low_thresh);
 
     bool host_hysteresis_changes = true;
@@ -79,7 +79,8 @@ std::pair<int64_t, int64_t> ApplyCannyGPU(const uint8_t* input, uint8_t* output,
         host_hysteresis_changes = false;
         cudaMemcpyToSymbol(device_hysteresis_changes, &host_hysteresis_changes, sizeof(host_hysteresis_changes));
 
-        Hysteresis<<<numBlocks, threadsPerBlock>>>(cuda_padded_uint, padded_width, padded_height, kernel_radius);
+        Hysteresis__basic<<<numBlocks, threadsPerBlock>>>(
+                cuda_padded_uint, padded_width, padded_height, kernel_radius);
 
         cudaMemcpyFromSymbol(&host_hysteresis_changes, device_hysteresis_changes, sizeof(host_hysteresis_changes));
     }

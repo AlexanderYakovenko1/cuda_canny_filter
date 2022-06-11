@@ -330,9 +330,8 @@ void ApplySeparableConv2DRows__shared(const float* src, float* dst, int width, i
     }
 }
 
-// todo: change to no warp diversion
 __global__
-void MagnitudeAndDirection__basic(const float* horizontal, const float* vertical, float* mag, uint8_t* dir, int width, int height) {
+void MagnitudeAndDirection(const float* horizontal, const float* vertical, float* mag, uint8_t* dir, int width, int height) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (i < width * height) {
@@ -349,8 +348,6 @@ void MagnitudeAndDirection__basic(const float* horizontal, const float* vertical
     }
 }
 
-// todo: replace ifs with calculations to avoid warp diversion
-// todo: try shared memory
 __global__
 void NonMaxSuppression__basic(const float* mag, const uint8_t* dir, float* dst, int width, int height) {
     int i = blockIdx.y * blockDim.y + threadIdx.y;
@@ -361,11 +358,11 @@ void NonMaxSuppression__basic(const float* mag, const uint8_t* dir, float* dst, 
 
         float max_along_grad = 0.0;
         if (dir[idx] == 0) {
-            max_along_grad = max(mag[(i - 1) * width + (j)], mag[(i + 1) * width + (j)]);
+            max_along_grad = max(mag[(i - 1) * width + (j    )], mag[(i + 1) * width + (j    )]);
         } else if (dir[idx] == 1) {
             max_along_grad = max(mag[(i - 1) * width + (j + 1)], mag[(i + 1) * width + (j - 1)]);
         } else if (dir[idx] == 2) {
-            max_along_grad = max(mag[(i) * width + (j - 1)], mag[(i) * width + (j + 1)]);
+            max_along_grad = max(mag[(i    ) * width + (j - 1)], mag[(i    ) * width + (j + 1)]);
         } else if (dir[idx] == 3) {
             max_along_grad = max(mag[(i - 1) * width + (j - 1)], mag[(i + 1) * width + (j + 1)]);
         }
@@ -375,6 +372,25 @@ void NonMaxSuppression__basic(const float* mag, const uint8_t* dir, float* dst, 
         } else {
             dst[idx] = 0;
         }
+    }
+}
+
+__global__
+void NonMaxSuppression__nobranch(const float* mag, const uint8_t* dir, float* dst, int width, int height) {
+    int i = blockIdx.y * blockDim.y + threadIdx.y;
+    int j = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (i > 0 && i < height - 1 && j > 0 && j < width - 1) {
+        int idx = i * width + j;
+        float direction = dir[idx];
+
+        float max_along_grad = 0.0;
+        max_along_grad += (direction == 0) * max(mag[(i - 1) * width + (j    )], mag[(i + 1) * width + (j    )]);
+        max_along_grad += (direction == 1) * max(mag[(i - 1) * width + (j + 1)], mag[(i + 1) * width + (j - 1)]);
+        max_along_grad += (direction == 2) * max(mag[(i    ) * width + (j - 1)], mag[(i    ) * width + (j + 1)]);
+        max_along_grad += (direction == 3) * max(mag[(i - 1) * width + (j - 1)], mag[(i + 1) * width + (j + 1)]);
+
+        dst[idx] = mag[idx] * (mag[idx] > max_along_grad);
     }
 }
 
@@ -394,7 +410,16 @@ void Thresholding__basic(const float* src, uint8_t* dst, int width, int height, 
     }
 }
 
-// todo: add shmem
+// performs worse for some reason
+__global__
+void Thresholding__nobranch(const float* src, uint8_t* dst, int width, int height, float high_thresh, float low_thresh) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (i < width * height) {
+        dst[i] = ((WEAK_EDGE - 1) * (src[i] > high_thresh) + WEAK_EDGE) * (src[i] > low_thresh);
+    }
+}
+
 __global__
 void Hysteresis__basic(uint8_t* src, int width, int height, int pad) {
     int i = blockIdx.y * blockDim.y + threadIdx.y;

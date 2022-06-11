@@ -74,13 +74,19 @@ __global__
 void MagnitudeAndDirection(const float* horizontal, const float* vertical, float* mag, uint8_t* dir, int width, int height);
 
 __global__
-void NonMaxSuppression(const float* mag, const uint8_t* dir, float* dst, int width, int height);
+void NonMaxSuppression__basic(const float* mag, const uint8_t* dir, float* dst, int width, int height);
 
 __global__
-void Thresholding(const float* src, uint8_t* dst, int width, int height, float high_thresh, float low_thresh);
+void NonMaxSuppression__nobranch(const float* mag, const uint8_t* dir, float* dst, int width, int height);
 
 __global__
-void Hysteresis(uint8_t* src, int width, int height, int pad);
+void Thresholding__basic(const float* src, uint8_t* dst, int width, int height, float high_thresh, float low_thresh);
+
+__global__
+void Thresholding__nobranch(const float* src, uint8_t* dst, int width, int height, float high_thresh, float low_thresh);
+
+__global__
+void Hysteresis__basic(uint8_t* src, int width, int height, int pad);
 
 __global__
 void Cleanup(uint8_t* src, int width, int height);
