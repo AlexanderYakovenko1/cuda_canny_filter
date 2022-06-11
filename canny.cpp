@@ -40,7 +40,6 @@ void ApplyConv2D(const float* src, float* dst, int width, int height, const floa
     }
 }
 
-// dst is assumed to have shape (height, width, 2)
 void ApplySeparableConv2D(const float* src, float* dst, float* buffer, int width, int height, const float* kernel_h, int kernel_width, const float* kernel_v, int kernel_height) {
     int kernel_radius_width = kernel_width / 2;
     int kernel_radius_height = kernel_height / 2;

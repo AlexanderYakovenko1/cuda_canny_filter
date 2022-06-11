@@ -6,6 +6,23 @@
 #include <cmath>
 #include <chrono>
 
+#define STB_IMAGE_IMPLEMENTATION
+#include "include/stb_image.h"
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "include/stb_image_write.h"
+
+/// Wrapper function for saving images
+/// @param[in] src                      Source 8-bit image
+/// @param     path                     Path to save
+/// @param     width, height, channels  Image dimensions
+void SaveImage(const uint8_t* src, const char* path, int width, int height, int channels) {
+    int comp = STBI_rgb;
+    if (channels == 1) {
+        comp = STBI_grey;
+    }
+    stbi_write_png(path, width, height, comp, src, width * channels);
+}
+
 template<typename T>
 T* AllocateArray(int width, int height, int channels=1) {
     size_t image_size = width * height * channels;
@@ -27,7 +44,9 @@ void FloatToUint(const float* src, uint8_t* dst, int width, int height, int chan
     }
 }
 
-/// Zero-pad an array by pad pixels. \n
+///
+/// \brief Zero-pad an array by pad pixels.
+///
 /// No safety checks. All arrays have to be preallocated before passing into this function.
 /// \tparam T1 Source array type
 /// \tparam T2 Destination array type (note: implicit cast from T1 to T2)

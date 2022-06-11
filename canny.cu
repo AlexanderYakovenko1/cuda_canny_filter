@@ -1,35 +1,6 @@
-#include <cstdio>
+#include "canny.cuh"
 
-#define STB_IMAGE_IMPLEMENTATION
-#include "include/stb_image.h"
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#include "include/stb_image_write.h"
-
-#include "utils.h"
-
-#define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
-inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true)
-{
-    if (code != cudaSuccess)
-    {
-        fprintf(stderr,"GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
-        if (abort) exit(code);
-    }
-}
-
-void SaveImage(const uint8_t* src, const char* path, int width, int height, int channels) {
-    int comp = STBI_rgb;
-    if (channels == 1) {
-        comp = STBI_grey;
-    }
-    stbi_write_png(path, width, height, comp, src, width * channels);
-}
-
-__global__
-void helloCUDA(float f)
-{
-    printf("Hello thread %d, f=%f\n", threadIdx.x, f);
-}
+__device__ bool device_hysteresis_changes = false;
 
 __global__
 void RGBToGrayscale(const uint8_t* src, uint8_t* dst, int width, int height, int channels) {
@@ -46,47 +17,56 @@ void RGBToGrayscale(const uint8_t* src, uint8_t* dst, int width, int height, int
     }
 }
 
+__global__
+void Pad2DGPU(const uint8_t* src, float* dst, int width, int height, int channels, int pad) {
+    int padded_width = (width + 2 * pad);
+    int padded_height = (height + 2 * pad);
+
+    int i = blockIdx.y * blockDim.y + threadIdx.y;
+    int j = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (i < padded_height && j < padded_width) {
+        for (int c = 0; c < channels; ++c) {
+            int e_i = i - pad, e_j = j - pad;  // effective coordinates
+            if (i < pad) {
+                e_i = pad - i;
+            } else if (i >= height + pad) {
+                e_i = height - (i - height - pad) - 1;
+            }
+            if (j < pad) {
+                e_j = pad - j;
+            } else if (j >= width + pad) {
+                e_j = width - (j - width - pad) - 1;
+            }
+
+            int src_idx = (e_i * width + e_j) * channels + c;
+            int pad_idx = (i * padded_width + j) * channels + c;
+            dst[pad_idx] = src[src_idx];
+        }
+    }
+}
+
+__global__
+void CentralCropImageGPU(const uint8_t* src, uint8_t* dst, int width, int height, int channels, int pad) {
+    int cropped_width = (width - 2 * pad);
+    int cropped_height = (height - 2 * pad);
+
+    int i = blockIdx.y * blockDim.y + threadIdx.y;
+    int j = blockIdx.x * blockDim.x + threadIdx.x;
+
+    int offset = (pad * width) * channels;
+    if (i < cropped_height && j < cropped_width) {
+        for (int c = 0; c < channels; ++c) {
+            int src_idx = offset + (i * width + j + pad) * channels + c;
+            int crop_idx = (i * cropped_width + j) * channels + c;
+            dst[crop_idx] = src[src_idx];
+        }
+    }
+}
 
 
 // todo: unroll using templates
-//__global__
-//void ApplyConv2D(const float* src, float* dst, int width, int height, const float* kernel, int kernel_width, int kernel_height) {
-//    int kernel_radius_width = kernel_width / 2;
-//    int kernel_radius_height = kernel_height / 2;
-//
-//    // size of the area to load into shared mem
-//    extern __shared__ float data[];
-//    int processed_area_size = (kernel_height + blockDim.x) * (kernel_width + blockDim.y);
-//
-//    int top_left_x = blockIdx.x * blockDim.x;
-//    int top_left_y = blockIdx.y * blockDim.y;
-//    int first_idx = top_left_x * width + top_left_y;
-//    // load image patch with apron
-//    // todo: optimize for coalesced loading and use pitched array
-//
-//
-//
-//    for (int i = 0; i < height; ++i) {
-//        for (int j = 0; j < width; ++j) {
-//
-//            float conv_val = 0.;
-//            size_t idx, k_idx;
-//            for (int k_i = -kernel_radius_height; k_i <= kernel_radius_height; ++k_i) {
-//                for (int k_j = -kernel_radius_width; k_j <= kernel_radius_width; ++k_j) {
-//                    if (i + k_i >= 0 && i + k_i < height && j + k_j >= 0 && j + k_j < width) {
-//                        idx = (i + k_i) * width + j + k_j;
-//                        k_idx = (k_i + kernel_radius_height) * kernel_width + k_j + kernel_radius_width;
-//
-//                        conv_val += src[idx] * kernel[k_idx];
-//                    }
-//                }
-//            }
-//
-//            idx = i * width + j;
-//            dst[idx] = conv_val;
-//        }
-//    }
-//}
+// todo: optimize for coalesced loading and use pitched array
 
 __global__
 void ApplyConv2D__basic(const float* src, float* dst, int width, int height, const float* kernel, int kernel_width, int kernel_height) {
@@ -113,17 +93,6 @@ void ApplyConv2D__basic(const float* src, float* dst, int width, int height, con
         idx = i * width + j;
         dst[idx] = conv_val;
     }
-}
-
-/// Calculates offset for aligned shared memory access
-/// In practice calculates: pow(2, ceil(log2(size)+1))
-__host__ __device__
-int CalculateAlignedOffset(int size) {
-    int offset = 2;
-    while (size >>= 1) {
-        offset <<= 1;
-    }
-    return offset;
 }
 
 __global__
@@ -193,7 +162,6 @@ void ApplyConv2D__shared(const float* src, float* dst, int width, int height, co
     }
 }
 
-/// Apply separable convolution on columns (vertically)
 __global__
 void ApplySeparableConv2DCols__basic(const float* src, float* dst, int width, int height, const float* kernel, int kernel_size) {
     int kernel_radius = kernel_size / 2;
@@ -217,7 +185,6 @@ void ApplySeparableConv2DCols__basic(const float* src, float* dst, int width, in
     }
 }
 
-/// Apply separable convolution on rows (horizontally)
 __global__
 void ApplySeparableConv2DRows__basic(const float* src, float* dst, int width, int height, const float* kernel, int kernel_size) {
     int kernel_radius = kernel_size / 2;
@@ -241,7 +208,6 @@ void ApplySeparableConv2DRows__basic(const float* src, float* dst, int width, in
     }
 }
 
-/// Apply separable convolution on columns (vertically)
 __global__
 void ApplySeparableConv2DCols__shared(const float* src, float* dst, int width, int height, const float* kernel, int kernel_size) {
     int kernel_radius = kernel_size / 2;
@@ -366,7 +332,7 @@ void ApplySeparableConv2DRows__shared(const float* src, float* dst, int width, i
 
 // todo: change to no warp diversion
 __global__
-void MagnitudeAndDirection(const float* horizontal, const float* vertical, float* mag, uint8_t* dir, int width, int height) {
+void MagnitudeAndDirection__basic(const float* horizontal, const float* vertical, float* mag, uint8_t* dir, int width, int height) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (i < width * height) {
@@ -386,7 +352,7 @@ void MagnitudeAndDirection(const float* horizontal, const float* vertical, float
 // todo: replace ifs with calculations to avoid warp diversion
 // todo: try shared memory
 __global__
-void NonMaxSuppression(const float* mag, const uint8_t* dir, float* dst, int width, int height) {
+void NonMaxSuppression__basic(const float* mag, const uint8_t* dir, float* dst, int width, int height) {
     int i = blockIdx.y * blockDim.y + threadIdx.y;
     int j = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -412,15 +378,9 @@ void NonMaxSuppression(const float* mag, const uint8_t* dir, float* dst, int wid
     }
 }
 
-enum {
-    NO_EDGE = 0,
-    WEAK_EDGE = 128,
-    STRONG_EDGE = 255,
-};
-
 // todo: replace ifs with calculations to avoid warp diversion
 __global__
-void Thresholding(const float* src, uint8_t* dst, int width, int height, float high_thresh, float low_thresh) {
+void Thresholding__basic(const float* src, uint8_t* dst, int width, int height, float high_thresh, float low_thresh) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (i < width * height) {
@@ -434,11 +394,9 @@ void Thresholding(const float* src, uint8_t* dst, int width, int height, float h
     }
 }
 
-__device__ bool device_hysteresis_changes = false;
-
 // todo: add shmem
 __global__
-void Hysteresis(uint8_t* src, int width, int height, int pad) {
+void Hysteresis__basic(uint8_t* src, int width, int height, int pad) {
     int i = blockIdx.y * blockDim.y + threadIdx.y;
     int j = blockIdx.x * blockDim.x + threadIdx.x;
     int idx = i * width + j;
@@ -448,11 +406,11 @@ void Hysteresis(uint8_t* src, int width, int height, int pad) {
             -width - 1,
             -width    ,
             -width + 1,
-            -1,
-            1,
-            width - 1,
-            width    ,
-            width + 1
+                    -1,
+                     1,
+             width - 1,
+             width    ,
+             width + 1
     };
 
     __shared__ bool changes, anything;
@@ -481,14 +439,6 @@ void Hysteresis(uint8_t* src, int width, int height, int pad) {
     if (threadIdx.x == 0 && threadIdx.y == 0 && anything) {
         device_hysteresis_changes = true;
     }
-//    for (int i = pad; i < height - pad; ++i) {
-//        for (int j = pad; j < width - pad; ++j) {
-//            size_t idx = i * width + j;
-//            if (src[idx] == WEAK_EDGE) {
-//                src[idx] = NO_EDGE;
-//            }
-//        }
-//    }
 }
 
 __global__
@@ -500,132 +450,4 @@ void Cleanup(uint8_t* src, int width, int height) {
             src[i] = NO_EDGE;
         }
     }
-}
-
-constexpr int BLOCK_SIZE = 32;
-constexpr int MAX_THREADS = 1024;
-
-int main()
-{
-    int width, height, channels;
-
-    float sigma = 3;
-    int radius;
-    float* gaussian = GaussianKernel2D(sigma, &radius);
-    float* gaussian_sep = GaussianKernel1D(sigma, &radius);
-    float* dog_sep_diff = GaussianDerivativeKernel1D(sigma, &radius, true);
-    float* dog_sep_norm = GaussianDerivativeKernel1D(sigma, &radius, false);
-
-    uint8_t* image = stbi_load("../gz_a.png", &width, &height, &channels, STBI_rgb);
-    uint8_t* output = AllocateArray<uint8_t>(width, height);
-    float* pad = AllocateArray<float>(width + 2 * radius, height + 2 * radius);
-    uint8_t* padd = AllocateArray<uint8_t>(width + 2 * radius, height + 2 * radius);
-
-    uint8_t* cuda_image = nullptr;
-    uint8_t* cuda_gray = nullptr;
-    uint8_t* cuda_uint_pad = nullptr;
-    float* cuda_gaussian = nullptr;
-    float* cuda_gaussian_sep = nullptr;
-    float* cuda_dog_sep_diff = nullptr;
-    float* cuda_dog_sep_norm = nullptr;
-    float* cuda_pad = nullptr;
-    float* cuda_pad_buf = nullptr;
-    float* cuda_pad_out = nullptr;
-    float* cuda_pad_out_one = nullptr;
-    gpuErrchk( cudaMalloc(&cuda_image, width * height * channels * sizeof(uint8_t)) );
-    gpuErrchk( cudaMalloc(&cuda_gray, width * height * sizeof(uint8_t)) );
-    gpuErrchk( cudaMalloc(&cuda_uint_pad, (width + 2 * radius) * (height + 2 * radius) * sizeof(uint8_t)) );
-    gpuErrchk( cudaMalloc(&cuda_gaussian, (2 * radius + 1) * (2 * radius + 1) * sizeof(float)) );
-    gpuErrchk( cudaMalloc(&cuda_gaussian_sep, (2 * radius + 1) * sizeof(float)) );
-    gpuErrchk( cudaMalloc(&cuda_dog_sep_diff, (2 * radius + 1) * sizeof(float)) );
-    gpuErrchk( cudaMalloc(&cuda_dog_sep_norm, (2 * radius + 1) * sizeof(float)) );
-    gpuErrchk( cudaMalloc(&cuda_pad, (width + 2 * radius) * (height + 2 * radius) * sizeof(float)) );
-    gpuErrchk( cudaMalloc(&cuda_pad_buf, (width + 2 * radius) * (height + 2 * radius) * sizeof(float)) );
-    gpuErrchk( cudaMalloc(&cuda_pad_out, (width + 2 * radius) * (height + 2 * radius) * sizeof(float)) );
-    gpuErrchk( cudaMalloc(&cuda_pad_out_one, (width + 2 * radius) * (height + 2 * radius) * sizeof(float)) );
-    gpuErrchk( cudaMemcpy(cuda_image, image, width * height * channels * sizeof(uint8_t), cudaMemcpyHostToDevice) );
-
-    // pointwise operation
-    RGBToGrayscale<<<(width * height) / MAX_THREADS + 1, MAX_THREADS>>>(cuda_image, cuda_gray, width, height, channels);
-    gpuErrchk( cudaMemcpy(output, cuda_gray, width * height * sizeof(uint8_t), cudaMemcpyDeviceToHost) );
-
-//    SaveImage(output, "../cuda_gray.png", width, height, 1);
-
-    Pad2D<uint8_t, float>(output, pad, width, height, 1, radius);
-//    FloatToUint(pad, padd, width + 2 * radius, height + 2 * radius, 1);
-//    SaveImage(padd, "../cuda_pad.png", width + 2 * radius, height + 2 * radius, 1);
-
-
-    gpuErrchk( cudaMemcpy(cuda_pad, pad, (width + 2 * radius) * (height + 2 * radius) * sizeof(float), cudaMemcpyHostToDevice) );
-    dim3 numBlocks((width + 2 * radius) / BLOCK_SIZE + 1, (height + 2 * radius) / BLOCK_SIZE + 1);
-    dim3 threadsPerBlock(BLOCK_SIZE, BLOCK_SIZE);
-    gpuErrchk( cudaMemcpy(cuda_gaussian, gaussian, (2 * radius + 1) * (2 * radius + 1) * sizeof(float), cudaMemcpyHostToDevice) );
-    gpuErrchk( cudaMemcpy(cuda_gaussian_sep, gaussian_sep, (2 * radius + 1) * sizeof(float), cudaMemcpyHostToDevice) );
-    gpuErrchk( cudaMemcpy(cuda_dog_sep_diff, dog_sep_diff, (2 * radius + 1) * sizeof(float), cudaMemcpyHostToDevice) );
-    gpuErrchk( cudaMemcpy(cuda_dog_sep_norm, dog_sep_norm, (2 * radius + 1) * sizeof(float), cudaMemcpyHostToDevice) );
-    cudaError_t error = cudaGetLastError();
-    if(error != cudaSuccess) {
-        // print the CUDA error message and exit
-        printf("CUDA errsor: %s\n", cudaGetErrorString(error)); exit(-1); }
-
-    int memsize = CalculateAlignedOffset((2 * radius + 1) * (2 * radius + 1)) + (BLOCK_SIZE + 2 * radius) * (BLOCK_SIZE + 2 * radius);
-    int memsize_sep = CalculateAlignedOffset((2 * radius + 1)) + (BLOCK_SIZE + 2 * radius) * (BLOCK_SIZE + 2 * radius);
-    printf("memsize: %d\n", memsize_sep * sizeof(float));
-    cudaDeviceSynchronize();
-    std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
-//    ApplyConv2D__shared<<<numBlocks, threadsPerBlock, memsize * sizeof(float)>>>(cuda_pad, cuda_pad_out,
-//                                                       width + 2 * radius, height + 2 * radius, cuda_gaussian, 2 * radius + 1, 2 * radius + 1);
-//    ApplyConv2D__basic<<<numBlocks, threadsPerBlock>>>(cuda_pad, cuda_pad_out,
-//                                                       width + 2 * radius, height + 2 * radius, cuda_gaussian, 2 * radius + 1, 2 * radius + 1);
-//    ApplySeparableConv2DRows__basic<<<numBlocks, threadsPerBlock>>>(cuda_pad, cuda_pad_buf,
-//                                                                width + 2 * radius, height + 2 * radius, cuda_gaussian_sep, 2 * radius + 1);
-//    ApplySeparableConv2DCols__basic<<<numBlocks, threadsPerBlock>>>(cuda_pad_buf, cuda_pad_out,
-//                                                                    width + 2 * radius, height + 2 * radius, cuda_gaussian_sep, 2 * radius + 1);
-    ApplySeparableConv2DRows__shared<<<numBlocks, threadsPerBlock, memsize_sep * sizeof(float)>>>(cuda_pad, cuda_pad_buf,
-                                                                                                  width + 2 * radius, height + 2 * radius, cuda_dog_sep_diff, 2 * radius + 1);
-    ApplySeparableConv2DCols__shared<<<numBlocks, threadsPerBlock, memsize_sep * sizeof(float)>>>(cuda_pad_buf, cuda_pad_out,
-                                                                    width + 2 * radius, height + 2 * radius, cuda_dog_sep_norm, 2 * radius + 1);
-    ApplySeparableConv2DRows__shared<<<numBlocks, threadsPerBlock, memsize_sep * sizeof(float)>>>(cuda_pad, cuda_pad_buf,
-                                                                                                  width + 2 * radius, height + 2 * radius, cuda_dog_sep_norm, 2 * radius + 1);
-    ApplySeparableConv2DCols__shared<<<numBlocks, threadsPerBlock, memsize_sep * sizeof(float)>>>(cuda_pad_buf, cuda_pad_out_one,
-                                                                                                  width + 2 * radius, height + 2 * radius, cuda_dog_sep_diff, 2 * radius + 1);
-
-    MagnitudeAndDirection<<<((width + 2 * radius) * (height + 2 * radius)) / MAX_THREADS + 1, MAX_THREADS>>>(cuda_pad_out, cuda_pad_out_one,
-                                                                                                             cuda_pad_buf, cuda_uint_pad, width + 2 * radius, height + 2 * radius);
-
-    NonMaxSuppression<<<numBlocks, threadsPerBlock>>>(cuda_pad_buf, cuda_uint_pad, cuda_pad_out, width + 2 * radius, height + 2 * radius);
-    Thresholding<<<((width + 2 * radius) * (height + 2 * radius)) / MAX_THREADS + 1, MAX_THREADS>>>(cuda_pad_out, cuda_uint_pad, width + 2 * radius, height + 2 * radius, 1, 10);
-
-    bool host_hysteresis_changes = true;
-    while (host_hysteresis_changes) {
-        host_hysteresis_changes = false;
-        cudaMemcpyToSymbol(device_hysteresis_changes, &host_hysteresis_changes, sizeof(host_hysteresis_changes));
-
-        Hysteresis<<<numBlocks, threadsPerBlock>>>(cuda_uint_pad, width + 2 * radius, height + 2 * radius, radius);
-        cudaMemcpyFromSymbol(&host_hysteresis_changes, device_hysteresis_changes, sizeof(host_hysteresis_changes));
-        printf("pow\n");
-    }
-
-//    Cleanup<<<((width + 2 * radius) * (height + 2 * radius)) / MAX_THREADS + 1, MAX_THREADS>>>(cuda_uint_pad, width + 2 * radius, height + 2 * radius);
-
-    cudaDeviceSynchronize();
-    error = cudaGetLastError();
-    if(error != cudaSuccess) {
-        // print the CUDA error message and exit
-        printf("CUDA error: %s\n", cudaGetErrorString(error)); exit(-1); }
-    std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
-    std::cout << "Took " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << "[ms] to complete" << std::endl;
-
-    cudaMemcpy(pad, cuda_pad_buf, (width + 2 * radius) * (height + 2 * radius) * sizeof(float), cudaMemcpyDeviceToHost);
-    FloatToUint(pad, padd, width + 2 * radius, height + 2 * radius, 1);
-    SaveImage(padd, "../cuda_mag_debug.png", width + 2 * radius, height + 2 * radius, 1);
-    cudaMemcpy(padd, cuda_uint_pad, (width + 2 * radius) * (height + 2 * radius) * sizeof(uint8_t), cudaMemcpyDeviceToHost);
-    SaveImage(padd, "../gz_canny.png", width + 2 * radius, height + 2 * radius, 1);
-
-    helloCUDA<<<1, 5>>>(1.2345f);
-    cudaDeviceSynchronize();
-
-    cudaFree(cuda_image);
-    free(image);
-    return 0;
 }
