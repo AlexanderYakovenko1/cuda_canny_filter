@@ -185,7 +185,7 @@ void ParseArguments(int argc, char** argv, char** input, char** output, float* s
                             "  sigma\t\tGaussian filter sigma value, must be a positive float\n"
                             "  thr_high\tHigh threshold of Canny filter, must be a positive float\n"
                             "  thr_low\tLow threshold of Canny filter\n\n"
-                            "  num_runs\t(optional) number of runs for benchmarking"
+                            "  num_runs\t(optional) number of runs for benchmarking\n\n"
                             "Help:\n"
                             "  -h\t\tShow this text\n";
     if (argc < 6 || (argc > 1 && argv[1] == "-h")) {
