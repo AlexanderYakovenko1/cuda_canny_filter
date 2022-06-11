@@ -45,15 +45,23 @@ And displays the running times of the executables.
 
 Usage example:
 ```bash
-python3 wrapper.py ./build/openmp ./build/cuda 3 10 1 input_image.png output_image.png 10
+python3 wrapper.py ./build/openmp ./build/cuda 3 10 1 baboon.bmp baboon_edges.png
 ```
 Sample output:
-```asm
-Single threaded process took 599594 milliseconds on average
-OpenMP process took 87631 milliseconds on average
-CUDA process took 5007 milliseconds (without memory access time) on average
-CUDA process took 21532 milliseconds (with memory access time) on average
-CUDA process copying time took 16525 milliseconds on average
+```
+Running all executables for 1 iterations
+Running single threaded filter
+OMP_NUM_THREADS=1 build/openmp 3.0 10.0 1.0 baboon.bmp baboon_edges_cpu.png 1
+Running openmp filter
+build/openmp 3.0 10.0 1.0 baboon.bmp baboon_edges_openmp.png 1
+Running cuda filter
+build/cuda 3.0 10.0 1.0 baboon.bmp baboon_edges_cuda.png 1
+========================================
+Single threaded process took 24335 milliseconds on average
+OpenMP process took 15829 milliseconds on average
+CUDA process took 197 milliseconds (without memory access time) on average
+CUDA process took 77478 milliseconds (with memory access time) on average
+CUDA process copying time took 77281 milliseconds on average
 ```
 
 ### Requirements
