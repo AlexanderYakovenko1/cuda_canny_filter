@@ -9,10 +9,10 @@ void RGBToGrayscale(const uint8_t* src, uint8_t* dst, int width, int height, int
 
     if (src_idx < width * height * channels) {
         dst[dst_idx] =  static_cast<uint8_t>(min(
-            0.299f * src[src_idx    ] +
-            0.587f * src[src_idx + 1] +
-            0.114f * src[src_idx + 2],
-            255.f
+                0.299f * src[src_idx    ] +
+                0.587f * src[src_idx + 1] +
+                0.114f * src[src_idx + 2],
+                255.f
         ));
     }
 }
@@ -431,11 +431,11 @@ void Hysteresis__basic(uint8_t* src, int width, int height, int pad) {
             -width - 1,
             -width    ,
             -width + 1,
-                    -1,
-                     1,
-             width - 1,
-             width    ,
-             width + 1
+            -1,
+            1,
+            width - 1,
+            width    ,
+            width + 1
     };
 
     __shared__ bool changes, anything;

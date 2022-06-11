@@ -39,6 +39,23 @@ Help:
   -h            Show this text
 ```
 
+### Speed comparison
+A small python script in `wrapper.py` launches the filter in three modes: single-threaded, all cores using OpenMP and CUDA.  
+And displays the running times of the executables.
+
+Usage example:
+```bash
+python3 wrapper.py ./build/openmp ./build/cuda 3 10 1 input_image.png output_image.png 10
+```
+Sample output:
+```asm
+Single threaded process took 599594 milliseconds on average
+OpenMP process took 87631 milliseconds on average
+CUDA process took 5007 milliseconds (without memory access time) on average
+CUDA process took 21532 milliseconds (with memory access time) on average
+CUDA process copying time took 16525 milliseconds on average
+```
+
 ### Requirements
 The code was tested using Ubuntu 18.04 with CUDA 11.6  
 On a computer with AMD Ryzen 7 3700X CPU and NVIDIA GeForce GTX 1080 GPU

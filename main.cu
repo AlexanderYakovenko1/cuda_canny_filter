@@ -139,6 +139,8 @@ int main(int argc, char** argv) {
     std::cout << "Mean runtime over " << num_runs << " runs: " << total_duration_without / num_runs << "[µs] (without allocation)" << std::endl;
     std::cout << "Mean runtime over " << num_runs << " runs: " << total_duration_with / num_runs << "[µs] (with allocation)" << std::endl;
 
+    std::cout << total_duration_without / num_runs << " " << total_duration_with / num_runs << std::endl;
+
     SaveImage(edges, output_path, width, height, 1);
 
     free(image);
